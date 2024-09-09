@@ -3,7 +3,7 @@
 
 #######################################################################################
 # Setup -------------------------------------------------------------------
-setwd("C:/Users/mirte/Documents/UCSD/Data/Microcystis - files for sharing with manuscript")
+setwd("C:/Users/mirte/Documents/UCSD/Projects/Microcystis Warming")
 
 rm(list = ls())
 
@@ -22,12 +22,41 @@ library("ggpubr") #For ggdensity plotting
 library("patchwork") #For arranging facets of Figure 4, S3, S4 & S5
 library("scales") #For better axis labeling in Figure S4
 library("ggrepel") #For labels in Figure 5
+library("ggtree") #For maps
 
 options(es.use_symbols = TRUE) # get nice symbols when printing! 
 
 
 #######################################################################################
 # Figure 1 ----------------------------------------------------------------
+tree<-read.tree("RAxML_bipartitions.Testing_Aug_16_2024_noCR1901_10kboots.newick")#,node.label = 'support')
+#alignment length 490 bp
+metadata_full<-read.csv("Microcystis_mapping.csv")
+dd_full<-data.frame(Strain=metadata_full$Strain,TreeGroups=metadata_full$Tree_Groups,datasets=metadata_full$dataset)
+
+#tree_rest<-ggtree(tree)+geom_tiplab(align=TRUE)
+full_tree_p<-ggtree(tree) + geom_tree() +  theme_tree() +  geom_tiplab(size=7,hjust = -0.25)#geom_nodelab(geom='label', aes(label=support, subset=support > 80))
+
+dd_full$TreeGroups<-as.factor(dd_full$TreeGroups)
+dd_full$datasets<-as.factor(dd_full$datasets)
+dd_full$newlabel<-label_pad(dd_full$Strain)
+my_full_tree <- full_tree_p %<+% dd_full + geom_tippoint(aes(label=newlabel,color=TreeGroups,alpha=0.5),size=4)+ geom_treescale()+ theme(legend.position="right")+scale_color_manual(values = c("nutrient-rich"="green", "oligotrophic"="blue","pseudo-oligotrophic"="#56B4E9","none"="gray"))+guides(color=FALSE,alpha=FALSE)+geom_text2(aes(label=label, size=2, hjust=1.5, vjust= -0.75,subset = !is.na(as.numeric(label)) & as.numeric(label) > 0))#+xlim(NA,0.15)
+my_full_tree
+head(dd_full)
+test<-rotate(my_full_tree)
+
+#keep bootstraps above 50 like in Molecular Ecology paper 
+Fig_1 <- full_tree_p %<+% dd_full + 
+  geom_tippoint(aes(x=x+0.0008,color=TreeGroups,fill=datasets,hjust=-0.75),size=5,shape=21,stroke=4)+ 
+  # geom_nodelab(geom='label', aes(label=support, subset=support > 50))+
+  geom_text2(aes(label=label,x=branch,hjust=1.3, vjust= -0.95,subset = !is.na(as.numeric(label)) & as.numeric(label) >50),size=7)+
+  theme(legend.position="right")+
+  geom_treescale(fontsize=7)+
+  scale_color_manual(name="Genotype",labels=c("none"="N/A","nutrient-rich"="HN/HG","pseudo-oligotrophic"="HN/LG","oligotrophic"="LN/LG","LN/HG"='LN/HG'),values = c("LN/HG"="black","nutrient-rich"="green", "oligotrophic"="blue","pseudo-oligotrophic"="#56B4E9","none"="gray"))+
+  guides(alpha=FALSE,color=FALSE,size=FALSE,fill=FALSE)+
+  scale_fill_manual(name="Dataset",labels=c("old"="Original","new"="New"),values=c("old"="black","new"="white","none"="gray"),
+                    guide=guide_legend(keywidth=0.3, keyheight=0.3, ncol=2, order=2)) 
+Fig_1
 
 
 #######################################################################################
@@ -73,7 +102,7 @@ Fig_2 <- ggplot(data_exp_remO,aes(factor(temp),Growth,colour=combo))+
                                             'CR19-05' ="#525252", 'BU19-04' ="#676767", 'BU19-02' ="#7d7d7d")) +
   #RESET COLOUR SCALE AND ADD POINTS
   new_scale_colour() +
-  scale_color_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
+  scale_color_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue"))+
   geom_point(aes(colour = combo), size = 3, shape = 21, stroke = 1.75) +
   #ADD OUTLIER
@@ -147,16 +176,26 @@ data<-data[(data$Keep=="y"),]# This removes CR19-01, which is the sole LN/HG
 null<-clmm(as.factor(Crash_Numeric)~(1|Phase)+(1|strain),data=data)
 mid_1<-clmm(as.factor(Crash_Numeric)~as.factor(combo)+(1|Phase)+(1|strain),data=data)
 anova(null,mid_1)#p = 0.049 (mid_1 wins)
+mid_temp <- clmm(as.factor(Crash_Numeric)~as.factor(temp)+(1|Phase)+(1|strain),data=data)
+anova(null,mid_temp)#p = 0.0003071 (mid_2 wins)
 mid_2<-clmm(as.factor(Crash_Numeric)~as.factor(combo)+as.factor(temp)+(1|Phase)+(1|strain),data=data)
 anova(mid_1,mid_2)#p = 0.0003071 (mid_2 wins)
 full<-clmm(as.factor(Crash_Numeric)~as.factor(combo)*as.factor(temp)+(1|Phase)+(1|strain),data=data)
 anova(mid_2,full)#p = 0.0001453 (full model wins)
 
-#effect sizes for clmm
+#R2 for clmm
 library("rcompanion")
 nagelkerke(mid_1, null = null)
 nagelkerke(mid_2, null = mid_1)
 nagelkerke(full, null = mid_2)
+nagelkerke(full, null = null)
+
+#significance of fixed effects
+library(car)
+library(RVAideMemoire)
+
+Anova.clmm(full,
+           type = "II")
 
 #Plotting
 combo_names <- list('HNHG'="HL/HG",'HNLG'="HL/LG",'LNLG'="LL/LG")
@@ -172,7 +211,7 @@ Fig_3<- ggplot(data,aes(factor(temp),Growth))+
   geom_boxplot(aes(fill=combo), outlier.shape = NA,
                position=position_dodge(width=0.75), 
                cex = 0.75, alpha = 0.25) +
-  scale_fill_manual(name="Genotype",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),values=c("HNHG"="green","HNLG"="#56B4E9","LNHG"="black","LNLG"="blue")) +
+  scale_fill_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),values=c("HNHG"="green","HNLG"="#56B4E9","LNHG"="black","LNLG"="blue")) +
   geom_hline(yintercept=0, linetype="dashed",color = "red", size=1)+
   #RESET COLOUR SCALE AND ADD POINTS
   new_scale_fill() +
@@ -180,10 +219,12 @@ Fig_3<- ggplot(data,aes(factor(temp),Growth))+
               size=2.5, stroke=2.5, 
               shape=21,width=0.36,height=0.0)+
   theme_bw()+
-  theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),axis.title=element_text(size=16))+
+  theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),
+        plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),
+        axis.title=element_text(size=16), legend.position = "bottom")+
   labs(x=expression(paste("Temperature (", degree~C, ")")),y="Growth Rate") +
   scale_fill_manual(name="Growth Rate",values=c("negative"="black","positive"="white"))+
-  scale_color_manual(name="Genotype",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),values=c("HNHG"="green","HNLG"="#56B4E9","LNHG"="black","LNLG"="blue"))+
+  scale_color_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),values=c("HNHG"="green","HNLG"="#56B4E9","LNHG"="black","LNLG"="blue"))+
   guides(size="none",alpha="none")+
   facet_grid(Phase~combo,labeller = labeller(Phase = week_labeller, combo = combo_labeller))
 
@@ -1476,6 +1517,27 @@ ggplot(full_plot_lda) +
         axis.text=element_text(size=16),
         axis.title=element_text(size=16))
 
+#unlabeled version for powerpoint improved labels
+ggplot(full_plot_lda) + 
+  geom_segment(data = full_arrows, aes(x = x0, xend = x1, y = y0, yend = y1),
+               arrow = arrow(length = unit(0.5, "cm")),
+               size = 1, colour = "black") +
+  geom_point(aes(x = lda.LD1, y = lda.LD2, fill = combo), size = 5, pch = 21) +
+  #geom_text_repel(data = full_arrows, aes(x = x1 + (x1/10), y = y1, label = labs), cex = 4, colour = "darkred",
+  #                fontface = "bold", max.overlaps = 21, min.segment.length = 0.3, #nudge_x = -0.15,
+  #                segment.curvature = -0.1, point.size = 5) +
+  scale_fill_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
+                    values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
+  labs(fill = "Bacterial Type",
+       x = "Linear Discriminate Analysis Axis 1 (68.7%)",
+       y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
+  theme_bw() +
+  theme(strip.text.x = element_text(size = 16),
+        plot.title=element_text(hjust=0.5),
+        axis.text=element_text(size=16),
+        axis.title=element_text(size=16),
+        legend.position = "bottom")
+
 #test how good classifications are
 test <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
                         GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4), 
@@ -1492,6 +1554,40 @@ diag(prop.table(test.table, 1))
 
 #######################################################################################
 # Figure S1 ---------------------------------------------------------------
+full_tree<-read.tree("RAxML_bipartitions.Testing_Aug_23_2024_FigS1A_my_samples_only_10kboots")
+#full_tree<-read.tree("final whole tree MLST.txt")
+metadata_full<-read.csv("Microcystis_mapping_full_tree.csv")
+dd_full<-data.frame(Strain=metadata_full$Strain,TreeGroups=metadata_full$Tree_Groups)
+head(dd_full)
+full_tree_p<-ggtree(full_tree) + geom_tree() + theme_tree() + geom_tiplab(size=5,hjust = -0.25)
+Fig_S1A <-full_tree_p %<+% dd_full + 
+  geom_tippoint(aes(color=TreeGroups,alpha=0.5),size=4)+ 
+  geom_text2(aes(label=label,x=branch,hjust=1.3, vjust= -0.95,subset = !is.na(as.numeric(label)) & as.numeric(label) >50),size=5)+
+  #theme_grey()+
+  theme(legend.position="right")+
+  scale_color_manual(values = c("nutrient-rich"="green", "oligotrophic"="blue","pseudo-oligotrophic"="#56B4E9","none"="gray"))+
+  guides(color=FALSE,alpha=FALSE)+
+  geom_treescale(x = 0.07, y = 0)+
+  xlim(NA,0.15)
+Fig_S1A
+
+### Fig S1B
+
+full_its_tree<-read.tree("RAxML_bipartitions.Testing_Aug_17_2024_FigS1B_my_samples_only_10kboots")
+ggtree(full_its_tree)+geom_tiplab()
+metadata_full<-read.csv("Microcystis_mapping_for_ITSc.csv")
+dd_full<-data.frame(Strain=metadata_full$Strain,TreeGroups=metadata_full$Tree_Groups)
+full_tree_p<-ggtree(full_its_tree) + geom_tree() + theme_tree() + geom_tiplab(size=5,hjust = -0.015)
+my_full_tree <- full_tree_p %<+% dd_full +
+  geom_tippoint(aes(color=TreeGroups,alpha=0.5),size=4)+ 
+  theme(legend.position="right")+
+  geom_treescale()+
+  geom_text2(aes(label=label,x=branch,hjust=1.3, vjust= -0.95,subset = !is.na(as.numeric(label)) & as.numeric(label) >50),size=5)+
+  scale_color_manual(values = c("nutrient-rich"="green", "oligotrophic"="blue","pseudo-oligotrophic"="#56B4E9","none"="gray"))+
+  guides(color=FALSE,alpha=FALSE)#+xlim(NA,0.15)
+my_full_tree
+
+
 #######################################################################################
 # Figure S3 ---------------------------------------------------------------
 data<-read.csv("Sara_Revised_New_FixedSM.csv")
@@ -1520,11 +1616,12 @@ figS3 <- data %>%
                                             'CR19-05' ="#525252", 'BU19-04' ="#676767", 'BU19-02' ="#7d7d7d")) +
   #RESET COLOUR SCALE AND ADD POINTS
   new_scale_colour() +
-  scale_color_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
+  scale_color_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue"))+
   geom_point(aes(colour = combo), pch = 21, stroke = 2.5, size = 3, show.legend = FALSE) +
   geom_hline(yintercept = 0, col = "red", lty = 2) +
   theme_bw() +
+  labs(y = "Growth Rate") +
   theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),axis.title=element_text(size=16))+
   facet_grid(temp~combo, labeller = labeller(temp = c("20" = "20°C", "24" = "24°C", "28" = "28°C", "32" = "32°C"), 
                                              combo = combo_labeller))
@@ -1567,7 +1664,7 @@ hsp_table %>%
   dplyr::filter(!V5 == "htpX") %>%
   ggplot(aes(V5, Freq, colour=Tree_Groups)) + 
   geom_boxplot(outlier.shape = NA,position=position_dodge(width = 1), cex = 1)+
-  scale_colour_manual(name= expression(paste("Genotype of ", italic("Microcystis aeruginosa"))),
+  scale_colour_manual(name= expression(paste("Bacterial type of ", italic("Microcystis aeruginosa"))),
                       values=c("nutrient-rich"="green","pseudo-oligotrophic"="#56B4E9","oligotrophic"="blue"),
                       labels=c("nutrient-rich"="HL/HG","pseudo-oligotrophic"="HL/LG", "oligotrophic"="LL/LG"))+
   theme_bw()+
@@ -3859,9 +3956,9 @@ full_arrows <- data.frame("x0" = 0,
 
 ggplot(full_plot_lda) + 
   geom_point(aes(x = lda.LD1, y = lda.LD2, fill = combo), size = 5, pch = 21, alpha = 0.75) +
-  scale_fill_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
+  scale_fill_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
-  labs(fill = "GE-type",
+  labs(fill = "Bacterial Type",
        x = "Linear Discriminate Analysis Axis 1 (68.7%)",
        y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
   theme_bw() +
@@ -3873,10 +3970,10 @@ ggplot(full_plot_lda) +
                aes(x = x0, xend = x1, y = y0, yend = y1),
                arrow = arrow(length = unit(0.5, "cm")),
                size = 1, alpha = 0.75, colour = "black") +
-  geom_text_repel(data = full_arrows[!full_arrows$labs %in% c("Week 1", "Week 2", "Week 3", "Week 4"), ], 
-            aes(x = x1 + (x1/10), y = y1, label = labs), cex = 5, colour = "black", fontface = "bold",
-            max.overlaps = 14, segment.size = 1, min.segment.length = Inf, 
-            segment.curvature = -0.1, point.size = 5) +
+  #geom_text_repel(data = full_arrows[!full_arrows$labs %in% c("Week 1", "Week 2", "Week 3", "Week 4"), ], 
+  #          aes(x = x1 + (x1/10), y = y1, label = labs), cex = 5, colour = "black", fontface = "bold",
+  #          max.overlaps = 14, segment.size = 1, min.segment.length = Inf, 
+  #          segment.curvature = -0.1, point.size = 5) +
   geom_segment(data = full_arrows[full_arrows$labs %in% c("Week 1", "Week 2", "Week 3", "Week 4"), ], 
                aes(x = x0, xend = x1, y = y0, yend = y1),
                arrow = arrow(length = unit(0.5, "cm")),
