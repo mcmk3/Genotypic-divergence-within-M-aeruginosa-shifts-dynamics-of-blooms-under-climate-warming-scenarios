@@ -173,22 +173,16 @@ library("ordinal")
 data<-read.csv("Sara_Revised_New_FixedSM.csv")
 data<-data[(data$Keep=="y"),]# This removes CR19-01, which is the sole LN/HG
 
-null<-clmm(as.factor(Crash_Numeric)~(1|Phase)+(1|strain),data=data)
-mid_1<-clmm(as.factor(Crash_Numeric)~as.factor(combo)+(1|Phase)+(1|strain),data=data)
-anova(null,mid_1)#p = 0.049 (mid_1 wins)
-mid_temp <- clmm(as.factor(Crash_Numeric)~as.factor(temp)+(1|Phase)+(1|strain),data=data)
-anova(null,mid_temp)#p = 0.0003071 (mid_2 wins)
-mid_2<-clmm(as.factor(Crash_Numeric)~as.factor(combo)+as.factor(temp)+(1|Phase)+(1|strain),data=data)
-anova(mid_1,mid_2)#p = 0.0003071 (mid_2 wins)
-full<-clmm(as.factor(Crash_Numeric)~as.factor(combo)*as.factor(temp)+(1|Phase)+(1|strain),data=data)
-anova(mid_2,full)#p = 0.0001453 (full model wins)
+data$NegativePositiveGrowth<-as.factor(data$NegativePositiveGrowth)
+null<-clmm(NegativePositiveGrowth~(1|Phase)+(1|strain),data=data)
+mid_1<-clmm(NegativePositiveGrowth~as.factor(combo)+(1|Phase)+(1|strain),data=data)
+anova(null,mid_1)#p = 0.007084 (mid_1 wins) (i.e. combination is a significant predictor of crash)
 
-#R2 for clmm
-library("rcompanion")
-nagelkerke(mid_1, null = null)
-nagelkerke(mid_2, null = mid_1)
-nagelkerke(full, null = mid_2)
-nagelkerke(full, null = null)
+mid_2<-clmm(NegativePositiveGrowth~as.factor(combo)+as.factor(temp)+(1|Phase)+(1|strain),data=data)
+anova(mid_1,mid_2)#p = 0.007804  (mid_2 wins) (i.e. temperature is a significant predictor of crash)
+
+full<-clmm(NegativePositiveGrowth~as.factor(combo)*as.factor(temp)+(1|Phase)+(1|strain),data=data)
+anova(mid_2,full)#p = 0.4501 (full model wins) (but the interaction is not)
 
 #significance of fixed effects
 library(car)
