@@ -1,6 +1,3 @@
-#only still missing are the phylogenetic figures (1, S1)
-#and the LDA Fig 5 and S8
-
 #######################################################################################
 # Setup -------------------------------------------------------------------
 setwd("C:/Users/mirte/Documents/UCSD/Projects/Microcystis Warming")
