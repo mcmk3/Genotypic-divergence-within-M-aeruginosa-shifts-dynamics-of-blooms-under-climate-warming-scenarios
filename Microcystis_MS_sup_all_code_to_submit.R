@@ -206,9 +206,12 @@ Fig_3<- ggplot(data,aes(factor(temp),Growth))+
   geom_hline(yintercept=0, linetype="dashed",color = "red", size=1)+
   #RESET COLOUR SCALE AND ADD POINTS
   new_scale_fill() +
-  geom_jitter(aes(fill=NegativePositiveGrowth, colour=combo),
-              size=2.5, stroke=2.5, 
-              shape=21,width=0.36,height=0.0)+
+  #geom_jitter(aes(fill=NegativePositiveGrowth, colour=combo),
+  #            size=2.5, stroke=2.5, 
+  #            shape=21,width=0.36,height=0.0)+
+  geom_point(aes(fill=NegativePositiveGrowth, colour=combo),
+             size=2.5, stroke=2.5, 
+             shape=21, position = position_dodge2(width = 0.6)) +
   theme_bw()+
   theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),
