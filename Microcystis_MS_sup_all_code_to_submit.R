@@ -12,6 +12,8 @@ library("effectsize") #For calculating the effect sizes of linear mixed effect m
 library("emmeans") #For PostHoc tests form linear mixed effect models
 library("fBasics") #Needed for: normalTest to test whether expression data follows a normal distribution
 library("MASS") #Needed for: Box-Cox Transformations for Linear Models AND postHoc of multivariate analysis
+library("mgcv") #Needed for GAMs
+library("gratia") #For plotting GAMs
 
 library("ggplot2") #For plotting
 library("ggnewscale") #To allow two colour scales in Figure 2
@@ -23,10 +25,9 @@ library("ggtree") #For maps
 
 options(es.use_symbols = TRUE) # get nice symbols when printing! 
 
-
 #######################################################################################
 # Figure 1 ----------------------------------------------------------------
-tree<-read.tree("RAxML_bipartitions.Testing_Aug_16_2024_noCR1901_10kboots.newick")#,node.label = 'support')
+tree<-read.tree("RAxML_bipartitions.Testing_Oct_4_2024_noCR1901_10kboots.txt")#,node.label = 'support')
 #alignment length 490 bp
 metadata_full<-read.csv("Microcystis_mapping.csv")
 dd_full<-data.frame(Strain=metadata_full$Strain,TreeGroups=metadata_full$Tree_Groups,datasets=metadata_full$dataset)
@@ -53,6 +54,7 @@ Fig_1 <- full_tree_p %<+% dd_full +
   guides(alpha=FALSE,color=FALSE,size=FALSE,fill=FALSE)+
   scale_fill_manual(name="Dataset",labels=c("old"="Original","new"="New"),values=c("old"="black","new"="white","none"="gray"),
                     guide=guide_legend(keywidth=0.3, keyheight=0.3, ncol=2, order=2)) 
+
 Fig_1
 
 
@@ -62,18 +64,38 @@ data<-read.csv("Sara_Revised_New_FixedSM.csv")
 data<-data[(data$Keep=="y"),]# Removing CR19-01, which was the sole LN/HG
 data_exp<-data[(data$Phase=="Exp"),]#Sorting for exponential phase growth
 
-full<-nlme::lme(sqrt(Growth+1)~combo*factor(temp), random=~1|strain, data=data_exp, method="ML")
+#Check data for normality
+hist(data_exp$Growth)
+shapiro.test(data_exp$Growth)
+normalTest(data_exp$Growth, method = "da")
+
+#boxcox transformation of data for better normality
+b <- boxcox(lm(data_exp$Growth +1 ~ 1))
+lambda <- b$x[which.max(b$y)]
+lambda
+
+#check effect of boxcox transformation on data 
+hist(((data_exp$Growth + 1)^lambda - 1)/lambda)
+ggdensity(((data_exp$Growth + 1)^lambda - 1)/lambda, y = "density", fill = "grey") 
+shapiro.test(((data_exp$Growth + 1)^lambda - 1)/lambda)
+normalTest(((data_exp$Growth + 1)^lambda - 1)/lambda, method = "da")
+
+#normality of data is improved (though not perfect), so use this transformation
+#Transform data
+data_exp <- data_exp %>%
+  mutate(Growth_transformed = ((Growth + 1)^lambda - 1)/lambda) 
+
+full<-nlme::lme(Growth_transformed~factor(combo)*factor(temp), random=~1|strain, data=data_exp, method="REML") 
 anova(full)
 
 #Addition of effect size stats
-options(es.use_symbols = TRUE) # get nice symbols when printing! 
 effectsize::eta_squared(full) 
 
 #Remove outlier
 data_exp_remO <-data_exp[(data_exp$Outlier=="n"),]# Removing an LN/LG outlier from the main dataset, but it is added back in below 
 
 #check removing outlier not effecting results
-full_remO <-nlme::lme(sqrt(Growth+1)~combo*factor(temp), random=~1|strain, data=data_exp_remO, method="ML")
+full_remO <-nlme::lme(Growth_transformed~combo*factor(temp), random=~1|strain, data=data_exp_remO, method="REML")
 anova(full_remO)
 
 #Addition of effect size stats
@@ -135,36 +157,309 @@ data_exp_remO %>%
 (0.8184 - 0.2369667)/0.09208864 #sd from all strains mean
 (0.8184 - 0.1667833)/0.04190859 #sd from mean of LL/LG
 
+# Exponential phase GAM model selection ----------------------------------------------
+#following peerj.com/articles/6876
+#see also https://dfzljdn9uc3pi.cloudfront.net/2019/6876/1/fig-4-2x.jpg for explanation of models
+
+#make sure data has variables in right formats
+data_exp$strain <- as.factor(data_exp$strain)
+data_exp$combo <- as.factor(data_exp$combo)
+
+#model with only a global smoother
+G <- gam(Growth ~ s(temp, k=4, m=2) + 
+           s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+         method = 'REML',
+         data = data_exp)
+
+gratia::draw(G)
+summary(G)
+
+#global smoother plus group-level smoothers that have the same wiggliness - Global smoother with individual effects that have a Shared penalty
+GS <-  gam(Growth ~ s(temp, k=4, m=2) +
+             s(temp, combo, k=4, bs="fs", m=2) +
+             s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+           method = 'REML',
+           data = data_exp)
+
+gratia::draw(GS)
+summary(GS)
+AIC(G, GS)
+
+#A global smoother plus group-level smoothers with differing wiggliness - Global smoother with individual effects that have Individual penalties
+GI <- gam(Growth ~ s(temp, k=4, m=2) +
+            s(temp, by = combo, k=4, m=1) +
+            s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+          method = 'REML',
+          data = data_exp)
+
+gratia::draw(GI)
+summary(GI)
+AIC(G, GI)
+
+#Group-specific smoothers without a global smoother, but with all smoothers having the same wiggliness
+S <- gam(Growth ~ s(temp, combo, k=4, bs="fs", m=2) +
+           s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+         method = 'REML',
+         data = data_exp)
+
+gratia::draw(S)
+summary(S)
+AIC(G, S)
+AIC(GS, S)
+
+#Group-specific smoothers with different wiggliness
+I <- gam(Growth ~ s(temp, by = combo, k=4, m=1) +
+           s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+         method = 'REML',
+         data = data_exp)
+
+gratia::draw(I)
+summary(I)
+AIC(G, I)
+
+#compare all models
+AIC_table <- AIC(G,GS,GI,S,I)%>%
+  rownames_to_column(var= "Model")%>%
+  mutate(deltaAIC = AIC - min(AIC))%>%
+  mutate_at(.vars = vars(df,AIC, deltaAIC), 
+            .funs = funs(round,.args = list(digits=0))) %>% 
+  arrange(-AIC)
+
+AIC_table
 
 #######################################################################################
 # Figure 3 ----------------------------------------------------------------
 data<-read.csv("Sara_Revised_New_FixedSM.csv")
 data<-data[(data$Keep=="y"),]# This removes CR19-01, which is the sole LN/HG
 
+#Check data for normality
+hist(data$Growth)
+shapiro.test(data$Growth)
+normalTest(data$Growth, method = "da")
+
+#boxcox transformation of data for better normality
+b <- boxcox(lm(data$Growth +1 ~ 1))
+lambda <- b$x[which.max(b$y)]
+lambda
+
+#check effect of boxcox transformation on data 
+hist(((data$Growth + 1)^lambda - 1)/lambda)
+ggdensity(((data$Growth + 1)^lambda - 1)/lambda, y = "density", fill = "grey") 
+shapiro.test(((data$Growth + 1)^lambda - 1)/lambda)
+normalTest(((data$Growth + 1)^lambda - 1)/lambda, method = "da")
+
+#normality of data is improved (though not much), so use this transformation
+#Transform data
+data <- data %>%
+  mutate(Growth_transformed = ((Growth + 1)^lambda - 1)/lambda) 
+#while transformation doesn't make a huge difference the histogram and density looks a bit better and it is consistent to use this as used it earlier
+
+#make Phase an ordered factor for when it is an effect
+data$Phase <- factor(data$Phase, levels = c("Exp", "wk2", "wk3", "wk4"))
+#make sure strain & type are factors too (otherwise GAM will error)
+data$strain <- factor(data$strain)
+data$combo <- factor(data$combo)
+
+#LMEs ------------
 #Growth rate with phase (week) as a random effect
-full<-lme(sqrt(Growth+1)~combo*factor(temp), random=~1|Phase/strain, data=data, method="ML")
+full<-lme(Growth_transformed~factor(combo)*factor(temp), random=~1|Phase/strain, 
+          data=data, method="REML")
+#full<-lme(Growth_transformed~factor(combo)*factor(temp), random=~1|Phase, 
+#          data=data, method="REML")
 anova(full)
-eta_squared(full) 
+effectsize::eta_squared(full) 
 
-full<-lme(sqrt(Growth+1)~ combo + factor(temp) + factor(Phase) + combo:factor(temp) + combo:factor(Phase), random=~1|strain,data=data,method="ML")
-anova(full) 
-eta_squared(full) 
+#Model with phase
+no_ints <- lme(Growth_transformed~ factor(combo) + factor(temp) + factor(Phase), 
+              random=~1|strain,data=data,method="ML")
+lim_ints <- lme(Growth_transformed~ factor(combo) + factor(temp) + factor(Phase)+ 
+                  factor(combo):factor(temp) + factor(combo):factor(Phase), 
+                random=~1|strain,data=data,method="ML")
+anova(no_ints,lim_ints)
+two_way<-lme(Growth_transformed~ factor(combo) + factor(temp) + factor(Phase) + 
+            factor(combo):factor(temp) + factor(combo):factor(Phase) + factor(Phase):factor(temp), 
+          random=~1|strain,data=data,method="ML")
+anova(no_ints,two_way)
+anova(lim_ints,two_way)
+#full<-lme(Growth_transformed~ factor(combo)*factor(temp)*factor(Phase), 
+#          random=~1|strain,data=data,method="ML") 
+#anova(two_way, full)
 
-#POST HOCs
-full<-lme(sqrt(Growth+1)~combo*factor(temp), random=~1|Phase/strain, data=data, method="ML")
+#limited interaction model seems the best
+#switch back to REML method for final version now you're not comparing models 
+lim_ints <- lme(Growth_transformed~ factor(combo) + factor(temp) + factor(Phase)+ 
+                  factor(combo):factor(temp) + factor(combo):factor(Phase), 
+                random=~1|strain,data=data,method="REML")
+
+anova(lim_ints) 
+effectsize::eta_squared(lim_ints) 
+
+#GAMs -----------------
+#following peerj.com/articles/6876
+#model with only a global smoother
+G <- gam(Growth ~ s(temp, k=4) + s(strain, k = 19, bs = 're') + 
+           s(Phase, k = 4, bs = 're'), 
+         method = 'REML',
+         data = data)
+
+gam.check(G)
+gratia::draw(G) 
+summary(G)
+
+
+#global smoother plus group-level smoothers that have the same wiggliness - Global smoother with individual effects that have a Shared penalty
+GS <-  gam(Growth ~ s(temp, k=4, m=2) + s(strain, k = 19, bs = 're') +
+             s(temp, combo, k=4, bs="fs", m=2) +
+             s(Phase, k = 4, bs = 're'), 
+           method = 'REML',
+           data = data)
+#ignore warning, this is because you have global and group level trends across temp for growth rate
+
+gam.check(GS)
+gratia::draw(GS)
+summary(GS)
+AIC(G, GS)
+
+#A global smoother plus group-level smoothers with differing wiggliness - Global smoother with individual effects that have Individual penalties
+GI <- gam(Growth ~ s(temp, k=4, m=2) + s(strain, k = 19, bs = 're') +
+            s(temp, by = combo, k=4, bs="tp", m=1) +
+            s(Phase, k = 4, bs = 're'),
+          method = 'REML',
+          data = data)
+
+gam.check(GI)
+gratia::draw(GI)
+summary(GI)
+AIC(G, GI)
+
+#Group-specific smoothers without a global smoother, but with all smoothers having the same wiggliness
+S <- gam(Growth ~ s(temp, combo, k=4, bs="fs", m=2) + s(strain, k = 19, bs = 're') +
+           s(Phase, k = 4, bs = 're'), 
+         method = 'REML',
+         data = data)
+
+gam.check(S)
+gratia::draw(S)
+summary(S)
+AIC(G, S)
+AIC(GS, S)
+
+#Group-specific smoothers with different wiggliness
+I <- gam(Growth ~ s(temp, by = combo, k=4, m=1) + s(strain, k = 19, bs = 're') +
+           s(Phase, k = 4, bs = 're'), 
+         method = 'REML',
+         data = data)
+
+gam.check(I)
+gratia::draw(I)
+summary(I)
+AIC(G,I)
+AIC(GI,I)
+
+#compare all models
+AIC_table <- AIC(G,GS,GI,S,I)%>%
+  rownames_to_column(var= "Model")%>%
+  mutate(deltaAIC = AIC - min(AIC))%>%
+  mutate_at(.vars = vars(df,AIC, deltaAIC), 
+            .funs = funs(round,.args = list(digits=0))) %>% 
+  arrange(-AIC)
+
+AIC_table
+
+#NOW FOR THE WITH PHASE MODEL
+#model with only a global smoother
+G <- gam(Growth ~ s(temp, k=4) + 
+           s(temp, Phase, k = 4, bs = "fs", m = 2) +
+           s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+         method = 'REML',
+         data = data)
+
+gratia::draw(G)
+summary(G)
+
+#global smoother plus group-level smoothers that have the same wiggliness - Global smoother with individual effects that have a Shared penalty
+GS <-  gam(Growth ~ s(temp, k=4, m=2)  + #Phase + 
+             s(temp, combo, k=4, bs="fs", m=2) +
+             s(temp, Phase, k=4, bs="fs", m=2) +
+             s(strain, k = 19, bs = 're'), #random effects should always have k = to the number of levels of the factor
+           method = 'REML',
+           data = data)
+
+gratia::draw(GS)
+summary(GS)
+AIC(G, GS)
+
+#A global smoother plus group-level smoothers with differing wiggliness - Global smoother with individual effects that have Individual penalties
+GI <- gam(Growth ~ s(temp, k=4, m=2) + s(strain, k = 19, bs = 're') +
+            s(temp, by = combo, k=4, m=1) + 
+            s(temp, Phase, k=4, bs="fs", m=1),
+          method = 'REML',
+          data = data)
+
+gam.check(GI)
+gratia::draw(GI)
+summary(GI)
+AIC(G, GI)
+
+#Group-specific smoothers without a global smoother, but with all smoothers having the same wiggliness
+S <- gam(Growth ~ s(temp, combo, k=4, bs="fs", m=2) + s(strain, k = 19, bs = 're') +
+           s(temp, Phase, k=4, bs="fs", m=1), 
+         method = 'REML',
+         data = data)
+
+gam.check(S)
+gratia::draw(S)
+summary(S)
+AIC(G, S)
+AIC(GS, S)
+
+#Group-specific smoothers with different wiggliness
+I <- gam(Growth ~ s(temp, by = combo, k=4, m=1) + s(strain, k = 19, bs = 're') +
+           s(temp, Phase, k=4, bs="fs", m=1), 
+         method = 'REML',
+         data = data)
+
+gam.check(I)
+gratia::draw(I)
+summary(I)
+AIC(G,I)
+AIC(GI,I)
+
+#compare all models
+AIC_table <- AIC(G,GS,GI,S,I)%>%
+  rownames_to_column(var= "Model")%>%
+  mutate(deltaAIC = AIC - min(AIC))%>%
+  mutate_at(.vars = vars(df,AIC, deltaAIC), 
+            .funs = funs(round,.args = list(digits=0))) %>% 
+  arrange(-AIC)
+
+AIC_table
+
+#POST HOCs for LMEs ----------------
+full<-lme(Growth_transformed~factor(combo)*as.numeric(temp), random=~1|Phase/strain, data=data, method="REML")
 emmeans(full, pairwise ~ combo, adjust = "tukey")
 regrid(emmeans(full, pairwise ~ combo, adjust = "tukey"))
-emmeans(full, pairwise ~ combo|temp, adjust = "tukey")
-regrid(emmeans(full, pairwise ~ combo|temp, adjust = "tukey"))
+#to get comparisons across the temperatures use temp as an ordered factor
+data$tempF <- factor(data$temp, levels = c("20", "24", "28", "32"))
+full<-lme(Growth_transformed~factor(combo)*tempF, random=~1|Phase/strain, data=data, method="REML")
+#double check this doesn't have a meaningful change on the model
+anova(full) #same terms remain significant
+emmeans(full, pairwise ~ combo, adjust = "tukey") #same posthoc comparisons remain significant
+regrid(emmeans(full, pairwise ~ combo, adjust = "tukey"))
+#so good to go ahead with comparing within temperatures
+emmeans(full, pairwise ~ combo|tempF, adjust = "tukey")
+regrid(emmeans(full, pairwise ~ combo|tempF, adjust = "tukey"))
 
-full<-lme(sqrt(Growth+1)~ combo + factor(temp) + factor(Phase) + combo:factor(temp) + combo:factor(Phase), random=~1|strain,data=data,method="ML")
-emmeans(full, pairwise ~ combo, adjust = "tukey")
-emmeans(full, pairwise ~ Phase, adjust = "tukey")
-emmeans(full, pairwise ~ combo|temp, adjust = "tukey")
-emmeans(full, pairwise ~ combo|Phase, adjust = "tukey")
+#full<-lme(sqrt(Growth+1)~ combo + factor(temp) + factor(Phase) + combo:factor(temp) + combo:factor(Phase), 
+#          random=~1|strain,data=data,method="REML")
+#emmeans(full, pairwise ~ combo, adjust = "tukey")
+#emmeans(full, pairwise ~ Phase, adjust = "tukey")
+#emmeans(full, pairwise ~ combo|temp, adjust = "tukey")
+#emmeans(full, pairwise ~ combo|Phase, adjust = "tukey")
 
 
-#Cumulative Link Mixed Model - these are useful for ordered categorical data which is what the crash data is!
+#Cumulative Link Mixed Model -------------
+#these are useful for ordered categorical data which is what the crash data is!
 library("ordinal")
 #Cumulative Link Mixed Model for ranked categorical/ordinal data
 data<-read.csv("Sara_Revised_New_FixedSM.csv")
@@ -175,11 +470,11 @@ null<-clmm(NegativePositiveGrowth~(1|Phase)+(1|strain),data=data)
 mid_1<-clmm(NegativePositiveGrowth~as.factor(combo)+(1|Phase)+(1|strain),data=data)
 anova(null,mid_1)#p = 0.007084 (mid_1 wins) (i.e. combination is a significant predictor of crash)
 
-mid_2<-clmm(NegativePositiveGrowth~as.factor(combo)+as.factor(temp)+(1|Phase)+(1|strain),data=data)
+mid_2<-clmm(NegativePositiveGrowth~as.factor(combo)+factor(temp)+(1|Phase)+(1|strain),data=data)
 anova(mid_1,mid_2)#p = 0.007804  (mid_2 wins) (i.e. temperature is a significant predictor of crash)
 
-full<-clmm(NegativePositiveGrowth~as.factor(combo)*as.factor(temp)+(1|Phase)+(1|strain),data=data)
-anova(mid_2,full)#p = 0.4501 (full model wins) (but the interaction is not)
+full<-clmm(NegativePositiveGrowth~as.factor(combo)*factor(temp)+(1|Phase)+(1|strain),data=data)
+anova(mid_2,full) #p = 0.4501
 
 #significance of fixed effects
 library(car)
@@ -188,7 +483,7 @@ library(RVAideMemoire)
 Anova.clmm(full,
            type = "II")
 
-#Plotting
+#Plotting ==================
 combo_names <- list('HNHG'="HL/HG",'HNLG'="HL/LG",'LNLG'="LL/LG")
 combo_labeller <- function(variable,value){
   return(combo_names[value])
@@ -228,26 +523,38 @@ Fig_3
 # Separate statistical models for each GE-type ####
 #### Within each category of Microcystis, does exponential growth differ by temperature treatment?
 data <- read.csv("Sara_Revised_New_FixedSM.csv")
+
+#boxcox transformation of data for better normality
+b <- boxcox(lm(data$Growth +1 ~ 1))
+lambda <- b$x[which.max(b$y)]
+lambda
+
+#Transform data
+data <- data %>%
+  mutate(Growth_transformed = ((Growth + 1)^lambda - 1)/lambda) 
+#while transformation doesn't make a huge difference the histogram and density looks a bit better and it is consistent to use this as used it earlier
+
+#separate into types
 HNHG<-data[(data$combo=="HNHG"),]  
 HNLG<-data[(data$combo=="HNLG"),]  
 LNHG<-data[(data$combo=="LNHG"),] # no stats because just one strain 
 LNLG<-data[(data$combo=="LNLG"),]  
 
 #Linear mixed-effects models factoring in strain identity
-full<-lme(sqrt(Growth+1)~factor(temp),random=~1|Phase/strain,data=HNHG,method="ML")
+full<-lme(Growth_transformed~factor(temp),random=~1|Phase/strain,data=HNHG,method="REML")
 anova(full)
 effectsize::eta_squared(full) 
 emmeans(full, list(pairwise ~ temp), adjust = "tukey")
 
-full<-lme(sqrt(Growth+1)~factor(temp),random=~1|Phase/strain,data=HNLG,method="ML")
+full<-lme(Growth_transformed~factor(temp),random=~1|Phase/strain,data=HNLG,method="ML")
 anova(full)
-eta_squared(full) 
-emmeans(full, list(pairwise ~ temp), adjust = "tukey")
+#effectsize::eta_squared(full) 
+#emmeans(full, list(pairwise ~ temp), adjust = "tukey")
 
-full<-lme(sqrt(Growth+1)~factor(temp),random=~1|Phase/strain,data=LNLG,method="ML")
+full<-lme(Growth_transformed~factor(temp),random=~1|Phase/strain,data=LNLG,method="ML")
 anova(full)
-eta_squared(full) 
-emmeans(full, list(pairwise ~ temp), adjust = "tukey")
+#effectsize::eta_squared(full) 
+#emmeans(full, list(pairwise ~ temp), adjust = "tukey")
 
 
 #######################################################################################
@@ -1417,16 +1724,40 @@ plot_spacer() + Plot_ClpB + plot_spacer() + Plot_DnaJ + plot_spacer() + `Plot_Dn
 
 #######################################################################################
 # Figure 5 ------------------------------------------------------------------
+#expression data
 tdat <- read.csv("tdat.csv")
 
-#first need to 'widen' data
+#growth data
+data<-read.csv("Sara_Revised_New_FixedSM.csv")
+data<-data[(data$Keep=="y"),]# This removes CR19-01, which is the sole LN/HG
+
+#boxcox transformation of data for better normality (precident and testing done previously)
+b <- boxcox(lm(data$Growth +1 ~ 1))
+lambda <- b$x[which.max(b$y)]
+lambda
+
+#Transform data
+data <- data %>%
+  #while transformation doesn't make a huge difference the histogram and density looks a bit better and it is consistent to use this as used it earlier
+  mutate(Growth_transformed = ((Growth + 1)^lambda - 1)/lambda) %>% 
+  #also remove unecessary columns of the data
+  dplyr::select(flask, strain, Lake, combo_temp, combo, genotype, Trophic, temp, Crash_Numeric, Crash, Growth_transformed, Phase) %>% 
+  #and widen data so each Phase has its own growth data column
+  dcast(flask + strain + temp + genotype + Trophic + combo + Crash_Numeric ~ Phase, 
+        value.var = "Growth_transformed") %>% 
+  #rename these to make it clear they are the transformed values
+  rename(Exp_transformed = Exp, wk2_transformed = wk2, wk3_transformed = wk3, wk4_transformed = wk4)
+  
+
+#'widen' expression data
 tdat_wide <- dcast(data = tdat, flask + combo + temp + genotype + Trophic + lake + strain + Crash_Numeric + ExpPhase + wk2 + wk3 + wk4 ~ Target, 
-                   value.var = "CT.metric")
+                   value.var = "CT.metric") %>% 
+  left_join(y = data, by = join_by(flask, strain, temp, genotype, Trophic, combo, Crash_Numeric))
 
 
-full_MANOVA <- manova(cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
-                            GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4) 
-                      ~ combo*factor(temp), 
+full_MANOVA <- manova(cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, 
+                            Exp_transformed, wk2_transformed, wk3_transformed, wk4_transformed) 
+                      ~ factor(combo)*factor(temp), 
                       data = tdat_wide)
 
 summary(full_MANOVA)
@@ -1434,14 +1765,14 @@ effectsize::eta_squared(full_MANOVA)
 
 expression_MANOVA <- manova(cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
                                   GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG) 
-                            ~ factor(temp)*combo, 
+                            ~ factor(combo)*factor(temp), 
                             data = tdat_wide)
 
 summary(expression_MANOVA)
 effectsize::eta_squared(expression_MANOVA)
 
-growth_MANOVA <- manova(cbind(ExpPhase, wk2, wk3, wk4) 
-                        ~ combo*temp, 
+growth_MANOVA <- manova(cbind(Exp_transformed, wk2_transformed, wk3_transformed, wk4_transformed) 
+                        ~ factor(combo)*factor(temp), 
                         data = tdat_wide)
 
 summary(growth_MANOVA)
@@ -1450,8 +1781,8 @@ effectsize::eta_squared(growth_MANOVA)
 #post hoc for full model
 #test for homogeneity of within-group covariance
 t_mat <- as.matrix(tdat_wide[, c("ClpB", "DnaJ", "DnaK-fp", "DnaK1", "DnaK3", "GroEL", 
-                                 "GroES", "GrpE", "Hep", "HrcA", "Hsp20", "HspA", "HtpG", "ExpPhase", 
-                                 "wk2", "wk3", "wk4")])
+                                 "GroES", "GrpE", "Hep", "HrcA", "Hsp20", "HspA", "HtpG", "Exp_transformed", 
+                                 "wk2_transformed", "wk3_transformed", "wk4_transformed")])
 
 t_mat_dist <- dist(t_mat)
 
@@ -1459,8 +1790,8 @@ vegan::permutest(vegan::betadisper(t_mat_dist, tdat_wide$combo))
 #dispersion is okay so can go ahead with lda!
 
 
-full_post_hoc <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
-                                 GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4), 
+full_post_hoc <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, 
+                                 Exp_transformed, wk2_transformed, wk3_transformed, wk4_transformed), 
                      data = tdat_wide,
                      CV = F)
 full_post_hoc
@@ -1475,8 +1806,8 @@ ggplot(full_plot_lda) +
   scale_color_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
   labs(colour = "GE-type",
-       x = "Linear Discriminate Analysis Axis 1 \n(Proportion of trace = 0.69)",
-       y = "Linear Discriminate Analysis Axis 2 \n(Proportion of trace = 0.31)") +
+       x = "Linear Discriminate Analysis Axis 1 \n(Proportion of trace = 0.75)",
+       y = "Linear Discriminate Analysis Axis 2 \n(Proportion of trace = 0.25)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
@@ -1503,8 +1834,8 @@ ggplot(full_plot_lda) +
   scale_fill_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
   labs(fill = "GE-type",
-       x = "Linear Discriminate Analysis Axis 1 (68.7%)",
-       y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
+       x = "Linear Discriminate Analysis Axis 1 (74.7%)",
+       y = "Linear Discriminate Analysis Axis 2 (25.3%)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
@@ -1523,8 +1854,8 @@ ggplot(full_plot_lda) +
   scale_fill_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                     values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
   labs(fill = "Bacterial Type",
-       x = "Linear Discriminate Analysis Axis 1 (68.7%)",
-       y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
+       x = "Linear Discriminate Analysis Axis 1 (74.7%)",
+       y = "Linear Discriminate Analysis Axis 2 (25.3%)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
@@ -1534,7 +1865,8 @@ ggplot(full_plot_lda) +
 
 #test how good classifications are
 test <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
-                        GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4), 
+                        GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, Exp_transformed, 
+                        wk2_transformed, wk3_transformed, wk4_transformed), 
             data = tdat_wide,
             CV = TRUE)
 
@@ -1543,8 +1875,11 @@ summary(test)
 test$class
 
 test.table <- table(tdat_wide$combo, test$class)
+#percent correct per category
 diag(prop.table(test.table, 1))
-
+#this was far better when using the untransformed growth data...
+# total percent correct
+sum(diag(prop.table(test.table)))
 
 #######################################################################################
 # Figure S1 ---------------------------------------------------------------
@@ -1615,12 +1950,19 @@ figS3 <- data %>%
   geom_point(aes(colour = combo), pch = 21, stroke = 2.5, size = 3, show.legend = FALSE) +
   geom_hline(yintercept = 0, col = "red", lty = 2) +
   theme_bw() +
-  labs(y = "Growth Rate") +
-  theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),axis.title=element_text(size=16))+
+  labs(y = "Growth Rate", x = "") +
+  theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),plot.title=element_text(hjust=0.5),
+        axis.text=element_text(size=16),axis.title=element_text(size=16), axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  scale_x_discrete(labels = c("Week 1", "Week 2", "Week 3", "Week 4")) +
   facet_grid(temp~combo, labeller = labeller(temp = c("20" = "20°C", "24" = "24°C", "28" = "28°C", "32" = "32°C"), 
                                              combo = combo_labeller))
 
 figS3
+
+tiff("./Final figure files/FigS3.tiff", units="px", width=3000, height=2500, res=300)
+figS3
+dev.off()
+
 #######################################################################################
 # Figure S4 ---------------------------------------------------------------
 #Read in and process data
@@ -3783,7 +4125,9 @@ plot_spacer() + Plot_ClpB + plot_spacer() + Plot_DnaJ + plot_spacer() + `Plot_Dn
 
 #add back legends and facet headings in powerpoint for a smoother final effect
 
-
+tiff("./Final figure files/FigS6_R.tiff", units="px", width=8000, height=4000, res=300)
+Plot_ClpB | Plot_DnaJ | `Plot_DnaK-fp` | Plot_DnaK1 | Plot_DnaK3 | Plot_GroEL | Plot_GroES | Plot_GrpE | Plot_HrcA | Plot_Hsp20 | Plot_HspA | Plot_HtpG
+dev.off()
 
 #######################################################################################
 # Figure S7 ---------------------------------------------------------------
@@ -3909,26 +4253,47 @@ assign(nam, pHLHG + pHLLG + pLLLG)
 
 Plot_Hep
 
+tiff("./Final figure files/FigS7_R.tiff", units="px", width=2500, height=1500, res=300)
+Plot_Hep
+dev.off()
 #add back legends and facet headings in powerpoint for a smoother final effect
 
 
 #######################################################################################
 # Figure S8 --------------------------------------------------------------
+#expression data
 tdat <- read.csv("tdat.csv")
 
-#first need to 'widen' data
+#growth data
+data<-read.csv("Sara_Revised_New_FixedSM.csv")
+data<-data[(data$Keep=="y"),]# This removes CR19-01, which is the sole LN/HG
+
+#boxcox transformation of data for better normality (precident and testing done previously)
+b <- boxcox(lm(data$Growth +1 ~ 1))
+lambda <- b$x[which.max(b$y)]
+lambda
+
+#Transform data
+data <- data %>%
+  #while transformation doesn't make a huge difference the histogram and density looks a bit better and it is consistent to use this as used it earlier
+  mutate(Growth_transformed = ((Growth + 1)^lambda - 1)/lambda) %>% 
+  #also remove unecessary columns of the data
+  dplyr::select(flask, strain, Lake, combo_temp, combo, genotype, Trophic, temp, Crash_Numeric, Crash, Growth_transformed, Phase) %>% 
+  #and widen data so each Phase has its own growth data column
+  dcast(flask + strain + temp + genotype + Trophic + combo + Crash_Numeric ~ Phase, 
+        value.var = "Growth_transformed") %>% 
+  #rename these to make it clear they are the transformed values
+  rename(Exp_transformed = Exp, wk2_transformed = wk2, wk3_transformed = wk3, wk4_transformed = wk4)
+
+
+#'widen' expression data
 tdat_wide <- dcast(data = tdat, flask + combo + temp + genotype + Trophic + lake + strain + Crash_Numeric + ExpPhase + wk2 + wk3 + wk4 ~ Target, 
-                   value.var = "CT.metric")
+                   value.var = "CT.metric") %>% 
+  left_join(y = data, by = join_by(flask, strain, temp, genotype, Trophic, combo, Crash_Numeric))
 
 
-full_MANOVA <- manova(cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
-                            GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4) 
-                      ~ combo*factor(temp), 
-                      data = tdat_wide)
-
-
-full_post_hoc <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
-                                 GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4), 
+full_post_hoc <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, 
+                                 Exp_transformed, wk2_transformed, wk3_transformed, wk4_transformed), 
                      data = tdat_wide,
                      CV = F)
 full_post_hoc
@@ -3936,7 +4301,6 @@ full_post_hoc
 
 full_plot_lda <- data.frame(tdat_wide[, "combo"], lda = predict(full_post_hoc)$x)
 colnames(full_plot_lda) <- c("combo", "lda.LD1", "lda.LD2" )
-
 
 
 #biplot with just the expression variables
@@ -3948,18 +4312,19 @@ full_arrows <- data.frame("x0" = 0,
                                      "GroES", "GrpE", "Hep", "HrcA", "Hsp20", "HspA", "HtpG", "Week 1", 
                                      "Week 2", "Week 3", "Week 4"))
 
-ggplot(full_plot_lda) + 
+FigS8 <- ggplot(full_plot_lda) + 
   geom_point(aes(x = lda.LD1, y = lda.LD2, fill = combo), size = 5, pch = 21, alpha = 0.75) +
   scale_fill_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
   labs(fill = "Bacterial Type",
-       x = "Linear Discriminate Analysis Axis 1 (68.7%)",
-       y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
+       x = "Linear Discriminate Analysis Axis 1 (74.7%)",
+       y = "Linear Discriminate Analysis Axis 2 (25.3%)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
         axis.text=element_text(size=16),
-        axis.title=element_text(size=16)) +
+        axis.title=element_text(size=16),
+        legend.position = "bottom") +
   geom_segment(data = full_arrows[!full_arrows$labs %in% c("Week 1", "Week 2", "Week 3", "Week 4"), ], 
                aes(x = x0, xend = x1, y = y0, yend = y1),
                arrow = arrow(length = unit(0.5, "cm")),
@@ -3974,6 +4339,11 @@ ggplot(full_plot_lda) +
                size = 1, alpha = 0.75, colour = "darkgrey") +
   coord_cartesian(ylim = c(-4, 4), xlim = c(-4.2, 3))
 
+FigS8
+
+tiff("./Final figure files/FigS8_R.tiff", units="px", width=2500, height=2000, res=300)
+FigS8
+dev.off()
   
 
 

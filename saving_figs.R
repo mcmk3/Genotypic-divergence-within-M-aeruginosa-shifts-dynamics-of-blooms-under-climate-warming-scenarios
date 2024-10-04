@@ -19,7 +19,7 @@ library("tiff")
 
 #######################################################################################
 # Figure 1 ----------------------------------------------------------------
-tree<-read.tree("RAxML_bipartitions.Testing_Aug_16_2024_noCR1901_10kboots.newick")#,node.label = 'support')
+tree<-read.tree("RAxML_bipartitions.Testing_Oct_4_2024_noCR1901_10kboots.txt")#,node.label = 'support')
 #alignment length 490 bp
 metadata_full<-read.csv("Microcystis_mapping.csv")
 dd_full<-data.frame(Strain=metadata_full$Strain,TreeGroups=metadata_full$Tree_Groups,datasets=metadata_full$dataset)
@@ -1133,15 +1133,39 @@ dev.off()
 
 #######################################################################################
 # Figure 5 ------------------------------------------------------------------
+#expression data
 tdat <- read.csv("tdat.csv")
 
-#first need to 'widen' data
+#growth data
+data<-read.csv("Sara_Revised_New_FixedSM.csv")
+data<-data[(data$Keep=="y"),]# This removes CR19-01, which is the sole LN/HG
+
+#boxcox transformation of data for better normality (precident and testing done previously)
+b <- boxcox(lm(data$Growth +1 ~ 1))
+lambda <- b$x[which.max(b$y)]
+lambda
+
+#Transform data
+data <- data %>%
+  #while transformation doesn't make a huge difference the histogram and density looks a bit better and it is consistent to use this as used it earlier
+  mutate(Growth_transformed = ((Growth + 1)^lambda - 1)/lambda) %>% 
+  #also remove unecessary columns of the data
+  dplyr::select(flask, strain, Lake, combo_temp, combo, genotype, Trophic, temp, Crash_Numeric, Crash, Growth_transformed, Phase) %>% 
+  #and widen data so each Phase has its own growth data column
+  dcast(flask + strain + temp + genotype + Trophic + combo + Crash_Numeric ~ Phase, 
+        value.var = "Growth_transformed") %>% 
+  #rename these to make it clear they are the transformed values
+  rename(Exp_transformed = Exp, wk2_transformed = wk2, wk3_transformed = wk3, wk4_transformed = wk4)
+
+
+#'widen' expression data
 tdat_wide <- dcast(data = tdat, flask + combo + temp + genotype + Trophic + lake + strain + Crash_Numeric + ExpPhase + wk2 + wk3 + wk4 ~ Target, 
-                   value.var = "CT.metric")
+                   value.var = "CT.metric") %>% 
+  left_join(y = data, by = join_by(flask, strain, temp, genotype, Trophic, combo, Crash_Numeric))
 
 
-full_post_hoc <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, 
-                                 GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, ExpPhase, wk2, wk3, wk4), 
+full_post_hoc <- lda(combo~cbind(ClpB, DnaJ, `DnaK-fp`, DnaK1, DnaK3, GroEL, GroES, GrpE, Hep, HrcA, Hsp20, HspA, HtpG, 
+                                 Exp_transformed, wk2_transformed, wk3_transformed, wk4_transformed), 
                      data = tdat_wide,
                      CV = F)
 full_post_hoc
@@ -1155,9 +1179,9 @@ ggplot(full_plot_lda) +
   geom_point(aes(x = lda.LD1, y = lda.LD2, colour = combo), size = 4) +
   scale_color_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                      values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
-  labs(colour = "GE-type",
-       x = "Linear Discriminate Analysis Axis 1 \n(Proportion of trace = 0.69)",
-       y = "Linear Discriminate Analysis Axis 2 \n(Proportion of trace = 0.31)") +
+  labs(colour = "Type",
+       x = "Linear Discriminate Analysis Axis 1 \n(Proportion of trace = 0.75)",
+       y = "Linear Discriminate Analysis Axis 2 \n(Proportion of trace = 0.25)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
@@ -1181,11 +1205,11 @@ ggplot(full_plot_lda) +
   geom_text_repel(data = full_arrows, aes(x = x1 + (x1/10), y = y1, label = labs), cex = 4, colour = "darkred",
                   fontface = "bold", max.overlaps = 21, min.segment.length = 0.3, #nudge_x = -0.15,
                   segment.curvature = -0.1, point.size = 5) +
-  scale_fill_manual(name="GE-type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
+  scale_fill_manual(name="Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                     values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
-  labs(fill = "GE-type",
-       x = "Linear Discriminate Analysis Axis 1 (68.7%)",
-       y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
+  labs(fill = "Type",
+       x = "Linear Discriminate Analysis Axis 1 (74.7%)",
+       y = "Linear Discriminate Analysis Axis 2 (25.3%)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
@@ -1204,8 +1228,8 @@ Fig_5 <- ggplot(full_plot_lda) +
   scale_fill_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),
                     values=c("HNHG"="green","HNLG"="#56B4E9","LNLG"="blue")) +
   labs(fill = "Bacterial Type",
-       x = "Linear Discriminate Analysis Axis 1 (68.7%)",
-       y = "Linear Discriminate Analysis Axis 2 (31.2%)") +
+       x = "Linear Discriminate Analysis Axis 1 (74.7%)",
+       y = "Linear Discriminate Analysis Axis 2 (25.3%)") +
   theme_bw() +
   theme(strip.text.x = element_text(size = 16),
         plot.title=element_text(hjust=0.5),
