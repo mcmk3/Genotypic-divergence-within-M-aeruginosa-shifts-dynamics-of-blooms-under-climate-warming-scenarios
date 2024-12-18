@@ -115,7 +115,7 @@ Fig_2 <- ggplot(data_exp_remO,aes(factor(temp),Growth,colour=combo))+
   #THEME layers
   theme(strip.text.x = element_text(size = 16),plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),axis.title=element_text(size=16))+
   xlab("Temperature of Growth Experiment (°C)")+
-  ylab("Rate of Exponential Growth")+
+  ylab("Rate of Exponential Growth \n(per day)")+
   guides(size="none",alpha="none") +
   #FACET
   facet_grid(~combo, labeller=as_labeller(c('HNHG'="HL/HG",'HNLG'="HL/LG",'LNLG'="LL/LG")))
@@ -478,7 +478,7 @@ Fig_3<- ggplot(data,aes(factor(temp),Growth))+
         plot.title=element_text(hjust=0.5),axis.text=element_text(size=16),
         axis.title=element_text(size=16), legend.position = "bottom")+
   labs(x=expression(paste("Temperature (", degree~C, ")")),y="Growth Rate") +
-  scale_fill_manual(name="Growth Rate",values=c("negative"="black","positive"="white"))+
+  scale_fill_manual(name="Growth Rate (per day)",values=c("negative"="black","positive"="white"))+
   scale_color_manual(name="Bacterial Type",labels=c("HNHG"="HL/HG","HNLG"="HL/LG","LNLG"="LL/LG"),values=c("HNHG"="green","HNLG"="#56B4E9","LNHG"="black","LNLG"="blue"))+
   guides(size="none",alpha="none")+
   facet_grid(Phase~combo,labeller = labeller(Phase = week_labeller, combo = combo_labeller))
@@ -523,7 +523,7 @@ anova(full)
 # Figure 4 ----------------------------------------------------------------
 ##### Load data #####
 dat <- read.csv("cq.data.csv")
-met <- read.csv("Microcystis growth and metadata.csv")
+met <- read.csv("Microcystis_growth_and_metadata.csv")
 
 #### Process data ####
 #process metadata
@@ -543,7 +543,7 @@ sdat <- dat %>%
   #add a column that gives the type of gene
   mutate(Type = case_when(Target == "Hep" ~ "Toxin Gene", .default = "HSP Gene"))  %>%
   #remove unecessary columns
-  dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
+  #dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
   dplyr::filter(temp != "20") %>% 
   #remove the reference condition and gene which were used for calculating the gene expression metric
   dplyr::filter(!Target %in% c("", "rpoA"))
@@ -1830,7 +1830,7 @@ figS3 <- data %>%
   geom_point(aes(colour = combo), pch = 21, stroke = 2.5, size = 3, show.legend = FALSE) +
   geom_hline(yintercept = 0, col = "red", lty = 2) +
   theme_bw() +
-  labs(y = "Growth Rate", x = "") +
+  labs(y = "Growth Rate (per day)", x = "") +
   theme(strip.text.y=element_text(size=10),strip.text.x = element_text(size = 16),plot.title=element_text(hjust=0.5),
         axis.text=element_text(size=16),axis.title=element_text(size=16), axis.text.x = element_text(angle = 45, vjust = 0.5))+
   scale_x_discrete(labels = c("Week 1", "Week 2", "Week 3", "Week 4")) +
@@ -1849,11 +1849,11 @@ dev.off()
 hsps<-read.csv("Heat_Stress_pfam_list.csv",head=F)
 hsps_list<-hsps$V2
 pfam_table<-read.csv("R_file10r_PFAMs_by_strain.csv",head=F)
-pfam_to_label<-pfam_table[,5:6]
+pfam_to_label<-pfam_table[,4:5]
 
 #shorten the name of "Zn-dependent protease with chaperone function"
-pfam_to_label[12,1]
-pfam_to_label[12,1] <- "ZnPs*"
+pfam_to_label[11,1]
+pfam_to_label[11,1] <- "ZnPs*"
 
 pfam_table<-pfam_table[,1:2]
 length(hsps_list)
@@ -1877,8 +1877,8 @@ hsp_table<-hsp_table[!is.na(hsp_table$Strain),]
 
 #plot the results
 hsp_table %>%
-  dplyr::filter(!V5 == "htpX") %>%
-  ggplot(aes(V5, Freq, colour=Tree_Groups)) + 
+  dplyr::filter(!V4 == "htpX") %>%
+  ggplot(aes(V4, Freq, colour=Tree_Groups)) + 
   geom_boxplot(outlier.shape = NA,position=position_dodge(width = 1), cex = 1)+
   scale_colour_manual(name= expression(paste("Bacterial type of ", italic("Microcystis aeruginosa"))),
                       values=c("nutrient-rich"="green","pseudo-oligotrophic"="#56B4E9","oligotrophic"="blue"),
@@ -1895,7 +1895,7 @@ hsp_table %>%
 # Figure S5 ---------------------------------------------------------------
 ##### Load data #####
 dat <- read.csv("cq.data.csv")
-met <- read.csv("Microcystis growth and metadata.csv")
+met <- read.csv("Microcystis_growth_and_metadata.csv")
 
 #### Process data ####
 #process metadata
@@ -1915,7 +1915,7 @@ sdat <- dat %>%
   #add a column that gives the type of gene
   mutate(Type = case_when(Target == "Hep" ~ "Toxin Gene", .default = "HSP Gene"))  %>%
   #remove unecessary columns
-  dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
+  #dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
   dplyr::filter(temp != "20") %>% 
   #remove the reference condition and gene which were used for calculating the gene expression metric
   dplyr::filter(!Target %in% c("", "rpoA"))
@@ -2914,14 +2914,11 @@ plot_spacer() + Plot_ClpB + plot_spacer() + Plot_DnaJ + plot_spacer() + `Plot_Dn
 #add back legends and facet headings in powerpoint for a smoother final effect
 
 
-
-
-
 #######################################################################################
 # Figure S6 ---------------------------------------------------------------
 ##### Load data #####
 dat <- read.csv("cq.data.csv")
-met <- read.csv("Microcystis growth and metadata.csv")
+met <- read.csv("Microcystis_growth_and_metadata.csv")
 
 #### Process data ####
 #process metadata
@@ -2941,7 +2938,7 @@ sdat <- dat %>%
   #add a column that gives the type of gene
   mutate(Type = case_when(Target == "Hep" ~ "Toxin Gene", .default = "HSP Gene"))  %>%
   #remove unecessary columns
-  dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
+  #dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
   dplyr::filter(temp != "20") %>% 
   #remove the reference condition and gene which were used for calculating the gene expression metric
   dplyr::filter(!Target %in% c("", "rpoA"))
@@ -4010,7 +4007,7 @@ dev.off()
 # Figure S7 ---------------------------------------------------------------
 #### Load data #####
 dat <- read.csv("cq.data.csv")
-met <- read.csv("Microcystis growth and metadata.csv")
+met <- read.csv("Microcystis_growth_and_metadata.csv")
 
 #### Process data ####
 #process metadata
@@ -4030,7 +4027,7 @@ sdat <- dat %>%
   #add a column that gives the type of gene
   mutate(Type = case_when(Target == "Hep" ~ "Toxin Gene", .default = "HSP Gene"))  %>%
   #remove unecessary columns
-  dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
+  #dplyr::select(!c("X", "X.1", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7",))  %>%
   dplyr::filter(temp != "20") %>% 
   #remove the reference condition and gene which were used for calculating the gene expression metric
   dplyr::filter(!Target %in% c("", "rpoA"))
